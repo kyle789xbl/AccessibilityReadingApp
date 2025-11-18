@@ -555,30 +555,83 @@
 
         async function requestPermissions() {
             try {
-                await navigator.mediaDevices.getUserMedia({ 
+                // Request both permissions upfront
+                const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment' },
                     audio: true 
                 });
+                
+                // Immediately stop the stream - we just wanted to get permissions
+                stream.getTracks().forEach(track => track.stop());
+                
                 speak('Permissions granted. Ready to assist.');
+                updateStatus('Ready');
             } catch (error) {
                 console.error('Permission error:', error);
+                
+                let message = 'Camera and microphone access needed. ';
+                
+                if (error.name === 'NotAllowedError') {
+                    message += 'Please go to your browser settings and allow camera/microphone for this site.';
+                } else {
+                    message += 'Please check your device settings.';
+                }
+                
+                alert(message);
                 speak('Please enable camera and microphone in settings.');
             }
         }
 
         async function startCamera() {
             try {
-                cameraStream = await navigator.mediaDevices.getUserMedia({
+                // Stop any existing stream first
+                if (cameraStream) {
+                    cameraStream.getTracks().forEach(track => track.stop());
+                    cameraStream = null;
+                }
+
+                // Try with different constraints for better compatibility
+                let constraints = {
                     video: { 
                         facingMode: 'environment',
                         width: { ideal: 1920 },
                         height: { ideal: 1080 }
                     }
-                });
+                };
+
+                try {
+                    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+                } catch (firstError) {
+                    console.log('First attempt failed, trying simpler constraints...');
+                    // Fallback to simpler constraints
+                    constraints = {
+                        video: { facingMode: 'environment' }
+                    };
+                    try {
+                        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    } catch (secondError) {
+                        console.log('Second attempt failed, trying basic video...');
+                        // Final fallback - just any camera
+                        constraints = { video: true };
+                        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    }
+                }
                 
                 const video = document.getElementById('video');
                 video.srcObject = cameraStream;
-                await video.play();
+                
+                // Wait for video to be ready
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => {
+                        video.play()
+                            .then(resolve)
+                            .catch(reject);
+                    };
+                    video.onerror = reject;
+                    
+                    // Timeout after 5 seconds
+                    setTimeout(() => reject(new Error('Video load timeout')), 5000);
+                });
                 
                 isCameraOn = true;
                 document.getElementById('cameraOff').classList.add('hidden');
@@ -590,20 +643,41 @@
                 startContinuousScanning();
             } catch (error) {
                 console.error('Camera error:', error);
-                speak('Unable to access camera.');
+                
+                let errorMessage = 'Unable to access camera. ';
+                
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    errorMessage += 'Please allow camera access in your browser settings.';
+                } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                    errorMessage += 'No camera found on your device.';
+                } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                    errorMessage += 'Camera is being used by another app. Please close other apps and try again.';
+                } else {
+                    errorMessage += 'Error: ' + error.message;
+                }
+                
+                speak(errorMessage);
+                updateStatus('Camera Error');
+                alert(errorMessage);
             }
         }
 
         function stopCamera() {
             if (cameraStream) {
-                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream.getTracks().forEach(track => {
+                    track.stop();
+                    track.enabled = false;
+                });
                 cameraStream = null;
             }
+            
+            const video = document.getElementById('video');
+            video.srcObject = null;
+            video.pause();
             
             isCameraOn = false;
             document.getElementById('cameraOff').classList.remove('hidden');
             document.getElementById('cameraBtn').classList.remove('active');
-            document.getElementById('video').srcObject = null;
             
             stopContinuousScanning();
             speak('Camera off');
