@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Vision Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            overflow-x: hidden;
+            touch-action: manipulation;
+        }
+
+        .setup-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.98);
+            border: 3px solid #4a9eff;
+            border-radius: 20px;
+            padding: 2rem;
+            z-index: 1000;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 0 50px rgba(74, 158, 255, 0.5);
+        }
+
+        .setup-modal h2 {
+            margin-bottom: 1rem;
+            font-size: 1.8rem;
+            text-align: center;
+            color: #4a9eff;
+        }
+
+        .setup-modal p {
+            margin-bottom: 1.5rem;
+            text-align: center;
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .setup-modal input {
+            width: 100%;
+            padding: 1rem;
+            font-size: 1.1rem;
+            border: 2px solid #4a9eff;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            margin-bottom: 1rem;
+        }
+
+        .setup-modal button {
+            width: 100%;
+            padding: 1.2rem;
+            font-size: 1.2rem;
+            background: #4a9eff;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .app-container {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+            padding-bottom: 0;
+        }
+
+        .video-section {
+            position: relative;
+            margin: 0 auto;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .video-section.compact {
+            width: 90%;
+            max-width: 400px;
+            height: 300px;
+        }
+
+        .video-section.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 100;
+            margin: 0;
+            border-radius: 0 !important;
+        }
+
+        .video-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background: #000;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(74, 158, 255, 0.3);
+        }
+
+        .video-section.fullscreen .video-container {
+            border-radius: 0;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .camera-off {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .camera-off-icon {
+            font-size: 4rem;
+            opacity: 0.3;
+            margin-bottom: 1rem;
+        }
+
+        .camera-off-text {
+            font-size: 1.2rem;
+            color: #666;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        .focus-frame {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 85%;
+            height: 70%;
+            border: 2px solid rgba(74, 158, 255, 0.5);
+            border-radius: 15px;
+            transition: all 0.3s;
+        }
+
+        .focus-corner {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #4a9eff;
+        }
+
+        .focus-corner.tl { top: -2px; left: -2px; border-right: none; border-bottom: none; border-radius: 15px 0 0 0; }
+        .focus-corner.tr { top: -2px; right: -2px; border-left: none; border-bottom: none; border-radius: 0 15px 0 0; }
+        .focus-corner.bl { bottom: -2px; left: -2px; border-right: none; border-top: none; border-radius: 0 0 0 15px; }
+        .focus-corner.br { bottom: -2px; right: -2px; border-left: none; border-top: none; border-radius: 0 0 15px 0; }
+
+        .scanning-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #4a9eff, transparent);
+            box-shadow: 0 0 10px #4a9eff;
+            animation: scan 2.5s ease-in-out infinite;
+            display: none;
+        }
+
+        .scanning-line.active {
+            display: block;
+        }
+
+        @keyframes scan {
+            0%, 100% { top: 15%; opacity: 0; }
+            50% { top: 85%; opacity: 1; }
+        }
+
+        .video-controls {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+
+        .video-btn {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .video-btn:active {
+            transform: scale(0.9);
+        }
+
+        .video-btn.active {
+            background: #4a9eff;
+            border-color: #4a9eff;
+            box-shadow: 0 0 15px rgba(74, 158, 255, 0.6);
+        }
+
+        .status-badge {
+            position: absolute;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 0.75rem 1.5rem;
+            border-radius: 25px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4a9eff;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        .content-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            overflow-y: auto;
+            padding-bottom: 1rem;
+        }
+
+        .reading-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(74, 158, 255, 0.2);
+            border-radius: 15px;
+            padding: 1.5rem;
+            transition: all 0.3s;
+        }
+
+        .reading-card.highlight {
+            border-color: #4a9eff;
+            box-shadow: 0 5px 20px rgba(74, 158, 255, 0.3);
+            animation: highlightPulse 0.5s;
+        }
+
+        @keyframes highlightPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .reading-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .reading-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #4a9eff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .reading-time {
+            font-size: 0.85rem;
+            color: #888;
+        }
+
+        .reading-content {
+            font-size: 1.05rem;
+            line-height: 1.7;
+            color: #e0e0e0;
+        }
+
+        .reading-tags {
+            margin-top: 1rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .tag {
+            padding: 0.4rem 0.8rem;
+            background: rgba(74, 158, 255, 0.2);
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: #4a9eff;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1.5rem;
+            color: #666;
+        }
+
+        .empty-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.3;
+        }
+
+        .empty-text {
+            font-size: 1.1rem;
+        }
+
+        .controls-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.95);
+            backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(74, 158, 255, 0.2);
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.75rem;
+            z-index: 50;
+        }
+
+        .control-btn {
+            padding: 1rem;
+            border-radius: 12px;
+            border: 2px solid;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .control-btn:active {
+            transform: scale(0.95);
+        }
+
+        .btn-icon {
+            font-size: 1.8rem;
+        }
+
+        .btn-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-camera { border-color: #4a9eff; }
+        .btn-camera.active { 
+            background: rgba(74, 158, 255, 0.3);
+            box-shadow: 0 0 20px rgba(74, 158, 255, 0.4);
+        }
+
+        .btn-ask { border-color: #9b59b6; }
+        .btn-ask.recording { 
+            background: rgba(155, 89, 182, 0.3);
+            animation: pulse 1s infinite;
+        }
+
+        .btn-repeat { border-color: #f39c12; }
+        .btn-clear { border-color: #e74c3c; }
+
+        @media (max-width: 640px) {
+            .control-btn {
+                padding: 0.75rem 0.5rem;
+            }
+            
+            .btn-icon {
+                font-size: 1.5rem;
+            }
+            
+            .btn-label {
+                font-size: 0.65rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="setup-modal" id="setupModal">
+        <h2>👁️ Vision Assistant</h2>
+        <p>AI-powered visual assistance for reading labels, dates, and text in real-time</p>
+        <input 
+            type="password" 
+            id="apiKeyInput" 
+            placeholder="Enter API Key (sk-ant-...)"
+            aria-label="API Key"
+        >
+        <button onclick="saveApiKey()">Start Assistant</button>
+    </div>
+
+    <div class="app-container hidden" id="appContainer">
+        <div class="video-section compact" id="videoSection">
+            <div class="video-container">
+                <video id="video" playsinline autoplay muted></video>
+                
+                <div class="camera-off" id="cameraOff">
+                    <div class="camera-off-icon">📷</div>
+                    <div class="camera-off-text">Camera Off</div>
+                </div>
+                
+                <div class="video-overlay">
+                    <div class="focus-frame" id="focusFrame">
+                        <div class="focus-corner tl"></div>
+                        <div class="focus-corner tr"></div>
+                        <div class="focus-corner bl"></div>
+                        <div class="focus-corner br"></div>
+                        <div class="scanning-line" id="scanningLine"></div>
+                    </div>
+                </div>
+
+                <div class="video-controls">
+                    <button class="video-btn" id="expandBtn" title="Expand">⛶</button>
+                </div>
+
+                <div class="status-badge" id="statusBadge">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Ready</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-section" id="contentSection">
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon">👋</div>
+                <div class="empty-text">Tap Camera to start reading</div>
+            </div>
+            
+            <div id="readingsContainer"></div>
+        </div>
+
+        <div class="controls-bar">
+            <button class="control-btn btn-camera" id="cameraBtn">
+                <span class="btn-icon">📷</span>
+                <span class="btn-label">Camera</span>
+            </button>
+            <button class="control-btn btn-ask" id="askBtn">
+                <span class="btn-icon">🎤</span>
+                <span class="btn-label">Ask</span>
+            </button>
+            <button class="control-btn btn-repeat" id="repeatBtn">
+                <span class="btn-icon">🔁</span>
+                <span class="btn-label">Repeat</span>
+            </button>
+            <button class="control-btn btn-clear" id="clearBtn">
+                <span class="btn-icon">🗑️</span>
+                <span class="btn-label">Clear</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let apiKey = '';
+        let cameraStream = null;
+        let isCameraOn = false;
+        let isScanning = false;
+        let scanInterval = null;
+        let lastScanTime = 0;
+        let recognition = null;
+        let isRecording = false;
+        const synth = window.speechSynthesis;
+        let readings = [];
+        let isFullscreen = false;
+
+        // Initialize speech recognition
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+        }
+
+        function speak(text) {
+            synth.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 0.95;
+            utterance.pitch = 1;
+            utterance.volume = 1;
+            synth.speak(utterance);
+        }
+
+        function updateStatus(text) {
+            document.getElementById('statusText').textContent = text;
+        }
+
+        window.saveApiKey = function() {
+            const input = document.getElementById('apiKeyInput');
+            apiKey = input.value.trim();
+            
+            if (!apiKey || !apiKey.startsWith('sk-ant-')) {
+                alert('Please enter a valid Anthropic API key');
+                return;
+            }
+            
+            document.getElementById('setupModal').classList.add('hidden');
+            document.getElementById('appContainer').classList.remove('hidden');
+            
+            speak('Vision Assistant ready. Tap camera to start.');
+            requestPermissions();
+        };
+
+        async function requestPermissions() {
+            try {
+                await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' },
+                    audio: true 
+                });
+                speak('Permissions granted. Ready to assist.');
+            } catch (error) {
+                console.error('Permission error:', error);
+                speak('Please enable camera and microphone in settings.');
+            }
+        }
+
+        async function startCamera() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                });
+                
+                const video = document.getElementById('video');
+                video.srcObject = cameraStream;
+                await video.play();
+                
+                isCameraOn = true;
+                document.getElementById('cameraOff').classList.add('hidden');
+                document.getElementById('cameraBtn').classList.add('active');
+                
+                speak('Camera active. Point at text or packages.');
+                updateStatus('Camera Active');
+                
+                startContinuousScanning();
+            } catch (error) {
+                console.error('Camera error:', error);
+                speak('Unable to access camera.');
+            }
+        }
+
+        function stopCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            
+            isCameraOn = false;
+            document.getElementById('cameraOff').classList.remove('hidden');
+            document.getElementById('cameraBtn').classList.remove('active');
+            document.getElementById('video').srcObject = null;
+            
+            stopContinuousScanning();
+            speak('Camera off');
+            updateStatus('Ready');
+        }
+
+        function startContinuousScanning() {
+            if (scanInterval) return;
+            
+            isScanning = true;
+            document.getElementById('scanningLine').classList.add('active');
+            
+            scanInterval = setInterval(() => {
+                const now = Date.now();
+                if (now - lastScanTime > 3000) {
+                    captureAndAnalyze();
+                }
+            }, 3000);
+        }
+
+        function stopContinuousScanning() {
+            if (scanInterval) {
+                clearInterval(scanInterval);
+                scanInterval = null;
+            }
+            isScanning = false;
+            document.getElementById('scanningLine').classList.remove('active');
+        }
+
+        async function captureAndAnalyze() {
+            if (!isCameraOn) return;
+            
+            lastScanTime = Date.now();
+            updateStatus('Analyzing...');
+            
+            const video = document.getElementById('video');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            
+            const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+            
+            await analyzeImage(base64Data);
+        }
+
+        async function analyzeImage(base64Data, customPrompt = null) {
+            try {
+                const prompt = customPrompt || `You are a vision assistant for blind and partially sighted people. Analyze this image:
+
+1. If PRODUCT/PACKAGE: State product name, brand, and ANY DATES (expiration, best before, use by). Mention warnings or key ingredients.
+2. If TEXT/PRINT: Read it clearly.
+3. If OBJECT: Identify it with relevant safety info.
+
+Be CONCISE. Start with most critical info (dates, warnings). Format response naturally.`;
+
+                const messages = [
+                    {
+                        role: 'user',
+                        content: [
+                            { 
+                                type: 'image', 
+                                source: { 
+                                    type: 'base64', 
+                                    media_type: 'image/jpeg', 
+                                    data: base64Data 
+                                } 
+                            },
+                            { type: 'text', text: prompt }
+                        ]
+                    }
+                ];
+
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': apiKey,
+                        'anthropic-version': '2023-06-01'
+                    },
+                    body: JSON.stringify({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 500,
+                        messages: messages
+                    })
+                });
+
+                if (!response.ok) throw new Error(`API error: ${response.status}`);
+
+                const data = await response.json();
+                const reading = data.content[0].text;
+
+                addReading(reading, customPrompt ? 'Question' : 'Auto Scan');
+                speak(reading);
+                updateStatus('Reading Complete');
+                
+            } catch (error) {
+                console.error('Analysis error:', error);
+                updateStatus('Analysis Error');
+            }
+        }
+
+        function addReading(content, type = 'Auto Scan') {
+            document.getElementById('emptyState').classList.add('hidden');
+            
+            const reading = {
+                content,
+                type,
+                time: new Date().toLocaleTimeString(),
+                id: Date.now()
+            };
+            
+            readings.unshift(reading);
+            
+            const container = document.getElementById('readingsContainer');
+            const card = document.createElement('div');
+            card.className = 'reading-card highlight';
+            card.innerHTML = `
+                <div class="reading-header">
+                    <div class="reading-title">
+                        ${type === 'Auto Scan' ? '🔍' : '💬'} ${type}
+                    </div>
+                    <div class="reading-time">${reading.time}</div>
+                </div>
+                <div class="reading-content">${content}</div>
+            `;
+            
+            container.insertBefore(card, container.firstChild);
+            
+            setTimeout(() => card.classList.remove('highlight'), 500);
+            
+            // Keep only last 10 readings
+            if (readings.length > 10) {
+                readings.pop();
+                if (container.children.length > 10) {
+                    container.removeChild(container.lastChild);
+                }
+            }
+        }
+
+        // Camera button
+        document.getElementById('cameraBtn').addEventListener('click', () => {
+            if (isCameraOn) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        });
+
+        // Expand/collapse video
+        document.getElementById('expandBtn').addEventListener('click', () => {
+            const videoSection = document.getElementById('videoSection');
+            const contentSection = document.getElementById('contentSection');
+            const expandBtn = document.getElementById('expandBtn');
+            
+            isFullscreen = !isFullscreen;
+            
+            if (isFullscreen) {
+                videoSection.classList.remove('compact');
+                videoSection.classList.add('fullscreen');
+                contentSection.style.display = 'none';
+                expandBtn.textContent = '✕';
+                expandBtn.title = 'Close';
+            } else {
+                videoSection.classList.remove('fullscreen');
+                videoSection.classList.add('compact');
+                contentSection.style.display = 'flex';
+                expandBtn.textContent = '⛶';
+                expandBtn.title = 'Expand';
+            }
+        });
+
+        // Ask button
+        document.getElementById('askBtn').addEventListener('click', () => {
+            if (!recognition) {
+                speak('Speech recognition not supported');
+                return;
+            }
+
+            if (!isCameraOn) {
+                speak('Please turn on camera first');
+                return;
+            }
+
+            if (isRecording) {
+                recognition.stop();
+                return;
+            }
+
+            isRecording = true;
+            document.getElementById('askBtn').classList.add('recording');
+            updateStatus('Listening...');
+            speak('What would you like to know?');
+
+            setTimeout(() => recognition.start(), 1500);
+
+            recognition.onresult = async (event) => {
+                const transcript = event.results[0][0].transcript;
+                updateStatus('Processing...');
+                
+                const video = document.getElementById('video');
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
+                const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+                
+                await analyzeImage(base64Data, transcript);
+            };
+
+            recognition.onerror = () => {
+                speak('Could not hear you');
+                updateStatus('Ready');
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                document.getElementById('askBtn').classList.remove('recording');
+            };
+        });
+
+        // Repeat button
+        document.getElementById('repeatBtn').addEventListener('click', () => {
+            if (readings.length > 0) {
+                speak(readings[0].content);
+            } else {
+                speak('Nothing to repeat');
+            }
+        });
+
+        // Clear button
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            if (readings.length === 0) {
+                speak('Nothing to clear');
+                return;
+            }
+            
+            readings = [];
+            document.getElementById('readingsContainer').innerHTML = '';
+            document.getElementById('emptyState').classList.remove('hidden');
+            speak('Cleared all readings');
+        });
+
+        // Wake lock
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {}
+        }
+        requestWakeLock();
+    </script>
+</body>
+</html>
