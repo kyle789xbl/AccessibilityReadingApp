@@ -524,6 +524,10 @@
         const synth = window.speechSynthesis;
         let readings = [];
         let isFullscreen = false;
+        let isSpeaking = false;
+        let isProcessing = false;
+        let conversationMode = false;
+        let lastCapturedImage = null;
 
         // Initialize speech recognition
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -534,12 +538,24 @@
             recognition.lang = 'en-US';
         }
 
-        function speak(text) {
+        function speak(text, onEnd = null) {
             synth.cancel();
+            isSpeaking = true;
+            
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.rate = 0.95;
             utterance.pitch = 1;
             utterance.volume = 1;
+            
+            utterance.onend = () => {
+                isSpeaking = false;
+                if (onEnd) onEnd();
+            };
+            
+            utterance.onerror = () => {
+                isSpeaking = false;
+            };
+            
             synth.speak(utterance);
         }
 
@@ -712,12 +728,16 @@
         function startContinuousScanning() {
             if (scanInterval) return;
             
+            // Only auto-scan if not in conversation mode
+            if (conversationMode) return;
+            
             isScanning = true;
             document.getElementById('scanningLine').classList.add('active');
             
             scanInterval = setInterval(() => {
                 const now = Date.now();
-                if (now - lastScanTime > 3000) {
+                // Don't scan if speaking or processing
+                if (now - lastScanTime > 3000 && !isSpeaking && !isProcessing && !conversationMode) {
                     captureAndAnalyze();
                 }
             }, 3000);
@@ -733,9 +753,10 @@
         }
 
         async function captureAndAnalyze() {
-            if (!isCameraOn) return;
+            if (!isCameraOn || isSpeaking || isProcessing) return;
             
             lastScanTime = Date.now();
+            isProcessing = true;
             updateStatus('Analyzing...');
             
             const video = document.getElementById('video');
@@ -747,11 +768,13 @@
             ctx.drawImage(video, 0, 0);
             
             const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+            lastCapturedImage = base64Data;
             
             await analyzeImage(base64Data);
+            isProcessing = false;
         }
 
-        async function analyzeImage(base64Data, customPrompt = null) {
+        async function analyzeImage(base64Data, customPrompt = null, isFollowUp = false) {
             try {
                 const prompt = customPrompt || `You are a vision assistant for blind and partially sighted people. Analyze this image:
 
@@ -764,7 +787,6 @@ Be CONCISE. Start with most critical info (dates, warnings). Format response nat
                 let response, data, reading;
 
                 if (apiProvider === 'anthropic') {
-                    // Anthropic API call
                     const messages = [
                         {
                             role: 'user',
@@ -801,7 +823,6 @@ Be CONCISE. Start with most critical info (dates, warnings). Format response nat
                     reading = data.content[0].text;
 
                 } else if (apiProvider === 'openai') {
-                    // OpenAI API call
                     response = await fetch('https://api.openai.com/v1/chat/completions', {
                         method: 'POST',
                         headers: {
@@ -837,12 +858,30 @@ Be CONCISE. Start with most critical info (dates, warnings). Format response nat
                 }
 
                 addReading(reading, customPrompt ? 'Question' : 'Auto Scan');
-                speak(reading);
-                updateStatus('Reading Complete');
+                
+                // After reading, ask if they want to know more (only for voice questions)
+                if (customPrompt && !isFollowUp) {
+                    speak(reading, () => {
+                        conversationMode = true;
+                        updateStatus('Conversation Mode');
+                        speak('Would you like me to check for anything else on this item?', () => {
+                            // Start listening for follow-up
+                            setTimeout(() => {
+                                if (conversationMode) {
+                                    startFollowUpListening();
+                                }
+                            }, 500);
+                        });
+                    });
+                } else {
+                    speak(reading);
+                    updateStatus('Reading Complete');
+                }
                 
             } catch (error) {
                 console.error('Analysis error:', error);
                 updateStatus('Analysis Error');
+                isProcessing = false;
                 
                 let errorMsg = 'Analysis failed. ';
                 if (error.message.includes('401')) {
@@ -941,12 +980,16 @@ Be CONCISE. Start with most critical info (dates, warnings). Format response nat
                 return;
             }
 
-            if (isRecording) {
-                recognition.stop();
+            if (isRecording || isSpeaking || isProcessing) {
                 return;
             }
 
+            startListening();
+        });
+
+        function startListening() {
             isRecording = true;
+            isProcessing = true;
             document.getElementById('askBtn').classList.add('recording');
             updateStatus('Listening...');
             speak('What would you like to know?');
@@ -955,29 +998,110 @@ Be CONCISE. Start with most critical info (dates, warnings). Format response nat
 
             recognition.onresult = async (event) => {
                 const transcript = event.results[0][0].transcript;
+                
+                // Check for exit phrases
+                const lowerTranscript = transcript.toLowerCase();
+                if (lowerTranscript.includes('no') || 
+                    lowerTranscript.includes('that\'s all') || 
+                    lowerTranscript.includes('nothing else') ||
+                    lowerTranscript.includes('no thanks')) {
+                    
+                    conversationMode = false;
+                    isProcessing = false;
+                    updateStatus('Ready');
+                    speak('Okay, let me know if you need anything else.');
+                    return;
+                }
+                
                 updateStatus('Processing...');
                 
-                const video = document.getElementById('video');
-                const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0);
-                const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+                // Use the last captured image
+                if (lastCapturedImage) {
+                    await analyzeImage(lastCapturedImage, transcript);
+                } else {
+                    // Capture new image
+                    const video = document.getElementById('video');
+                    const canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0);
+                    const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+                    lastCapturedImage = base64Data;
+                    
+                    await analyzeImage(base64Data, transcript);
+                }
                 
-                await analyzeImage(base64Data, transcript);
+                isProcessing = false;
             };
 
             recognition.onerror = () => {
                 speak('Could not hear you');
                 updateStatus('Ready');
+                isProcessing = false;
+                conversationMode = false;
             };
 
             recognition.onend = () => {
                 isRecording = false;
                 document.getElementById('askBtn').classList.remove('recording');
             };
-        });
+        }
+
+        function startFollowUpListening() {
+            if (!recognition || isRecording || isSpeaking) return;
+            
+            isRecording = true;
+            document.getElementById('askBtn').classList.add('recording');
+            updateStatus('Listening for follow-up...');
+            
+            recognition.start();
+            
+            recognition.onresult = async (event) => {
+                const transcript = event.results[0][0].transcript;
+                
+                const lowerTranscript = transcript.toLowerCase();
+                if (lowerTranscript.includes('no') || 
+                    lowerTranscript.includes('that\'s all') || 
+                    lowerTranscript.includes('nothing else') ||
+                    lowerTranscript.includes('no thanks')) {
+                    
+                    conversationMode = false;
+                    updateStatus('Ready');
+                    speak('Okay, I\'m back to scanning mode.');
+                    return;
+                }
+                
+                updateStatus('Processing follow-up...');
+                
+                // Use the same image for follow-up questions
+                if (lastCapturedImage) {
+                    await analyzeImage(lastCapturedImage, transcript, true);
+                    // After response, ask again
+                    setTimeout(() => {
+                        if (conversationMode && !isSpeaking) {
+                            speak('Anything else about this item?', () => {
+                                setTimeout(() => {
+                                    if (conversationMode) {
+                                        startFollowUpListening();
+                                    }
+                                }, 500);
+                            });
+                        }
+                    }, 1000);
+                }
+            };
+            
+            recognition.onerror = () => {
+                conversationMode = false;
+                updateStatus('Ready');
+            };
+            
+            recognition.onend = () => {
+                isRecording = false;
+                document.getElementById('askBtn').classList.remove('recording');
+            };
+        }
 
         // Repeat button
         document.getElementById('repeatBtn').addEventListener('click', () => {
