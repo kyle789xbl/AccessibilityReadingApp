@@ -93,9 +93,17 @@
         }
 
         .video-section.compact {
-            width: 90%;
-            max-width: 400px;
-            height: 300px;
+            width: 100%;
+            max-width: 100%;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            margin: 0;
+        }
+
+        .video-section.compact .video-container {
+            border-radius: 0;
         }
 
         .video-section.fullscreen {
@@ -268,12 +276,7 @@
         }
 
         .content-section {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            overflow-y: auto;
-            padding-bottom: 1rem;
+            display: none;
         }
 
         .reading-card {
@@ -776,13 +779,20 @@
 
         async function analyzeImage(base64Data, customPrompt = null, isFollowUp = false) {
             try {
-                const prompt = customPrompt || `You are a vision assistant for blind and partially sighted people. Analyze this image:
+                const prompt = customPrompt || `You are a vision assistant for blind and partially sighted people. Analyze this image and respond in PLAIN TEXT ONLY (no markdown, no asterisks, no special formatting).
 
+IMPORTANT: First check image quality:
+- If the image is BLURRY, OUT OF FOCUS, or TOO DARK, say: "The image is too blurry. Please hold steady and try again" or "Move closer to the item" or "Please turn on more light."
+- If the image is CLEAR, proceed with analysis.
+
+For clear images:
 1. If PRODUCT/PACKAGE: State product name, brand, and ANY DATES (expiration, best before, use by). Mention warnings or key ingredients.
-2. If TEXT/PRINT: Read it clearly.
+2. If TEXT/PRINT: Read it clearly word by word.
 3. If OBJECT: Identify it with relevant safety info.
 
-Be CONCISE. Start with most critical info (dates, warnings). Format response naturally.`;
+CRITICAL: Respond in plain conversational text. No markdown formatting. No asterisks. No special characters. Just speak naturally as if talking to someone.
+
+Be CONCISE. Start with most critical info (dates, warnings).`;
 
                 let response, data, reading;
 
@@ -857,25 +867,51 @@ Be CONCISE. Start with most critical info (dates, warnings). Format response nat
                     reading = data.choices[0].message.content;
                 }
 
-                addReading(reading, customPrompt ? 'Question' : 'Auto Scan');
-                
-                // After reading, ask if they want to know more (only for voice questions)
-                if (customPrompt && !isFollowUp) {
-                    speak(reading, () => {
-                        conversationMode = true;
-                        updateStatus('Conversation Mode');
-                        speak('Would you like me to check for anything else on this item?', () => {
-                            // Start listening for follow-up
-                            setTimeout(() => {
-                                if (conversationMode) {
-                                    startFollowUpListening();
-                                }
-                            }, 500);
-                        });
-                    });
-                } else {
+                // Clean up any markdown formatting that might slip through
+                reading = reading.replace(/\*\*/g, '').replace(/\*/g, '').replace(/##/g, '').replace(/#/g, '');
+
+                // Check if the response indicates image quality issues
+                const lowerReading = reading.toLowerCase();
+                const isQualityIssue = lowerReading.includes('blurry') || 
+                                       lowerReading.includes('out of focus') || 
+                                       lowerReading.includes('too dark') ||
+                                       lowerReading.includes('move closer') ||
+                                       lowerReading.includes('move back') ||
+                                       lowerReading.includes('hold steady') ||
+                                       lowerReading.includes('more light');
+
+                if (isQualityIssue) {
+                    // Quality issue - give feedback but don't add to reading history
+                    updateStatus('Image Quality Issue');
                     speak(reading);
-                    updateStatus('Reading Complete');
+                    // Flash the focus frame red to indicate issue
+                    const focusFrame = document.getElementById('focusFrame');
+                    focusFrame.style.borderColor = 'rgba(255, 74, 74, 0.8)';
+                    setTimeout(() => {
+                        focusFrame.style.borderColor = '';
+                    }, 2000);
+                } else {
+                    // Good quality - proceed normally
+                    addReading(reading, customPrompt ? 'Question' : 'Auto Scan');
+                    
+                    // After reading, ask if they want to know more (only for voice questions)
+                    if (customPrompt && !isFollowUp) {
+                        speak(reading, () => {
+                            conversationMode = true;
+                            updateStatus('Conversation Mode');
+                            speak('Would you like me to check for anything else on this item?', () => {
+                                // Start listening for follow-up
+                                setTimeout(() => {
+                                    if (conversationMode) {
+                                        startFollowUpListening();
+                                    }
+                                }, 500);
+                            });
+                        });
+                    } else {
+                        speak(reading);
+                        updateStatus('Reading Complete');
+                    }
                 }
                 
             } catch (error) {
