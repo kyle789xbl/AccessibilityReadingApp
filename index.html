@@ -641,7 +641,13 @@
                         width: { ideal: 3840 },
                         height: { ideal: 2160 },
                         aspectRatio: { ideal: 16/9 },
-                        frameRate: { ideal: 30 }
+                        frameRate: { ideal: 30 },
+                        focusMode: { ideal: 'continuous' },
+                        focusDistance: { ideal: 0 },
+                        advanced: [
+                            { focusMode: 'continuous' },
+                            { focusDistance: 0 }
+                        ]
                     }
                 };
 
@@ -678,6 +684,30 @@
                     // Timeout after 5 seconds
                     setTimeout(() => reject(new Error('Video load timeout')), 5000);
                 });
+                
+                // Enable autofocus and advanced camera features
+                try {
+                    const videoTrack = cameraStream.getVideoTracks()[0];
+                    const capabilities = videoTrack.getCapabilities();
+                    const settings = {};
+                    
+                    // Enable autofocus if available
+                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                        settings.focusMode = 'continuous';
+                    }
+                    
+                    // Set focus distance to infinity (0) for better text/object scanning
+                    if (capabilities.focusDistance) {
+                        settings.focusDistance = capabilities.focusDistance.min || 0;
+                    }
+                    
+                    // Enable advanced features if available
+                    if (Object.keys(settings).length > 0) {
+                        await videoTrack.applyConstraints({ advanced: [settings] });
+                    }
+                } catch (focusError) {
+                    console.log('Advanced camera features not available:', focusError);
+                }
                 
                 isCameraOn = true;
                 document.getElementById('cameraOff').classList.add('hidden');
@@ -980,6 +1010,44 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
                 stopCamera();
             } else {
                 startCamera();
+            }
+        });
+
+        // Tap-to-focus on video
+        document.getElementById('video').addEventListener('click', async (e) => {
+            if (!isCameraOn || !cameraStream) return;
+            
+            try {
+                const videoTrack = cameraStream.getVideoTracks()[0];
+                const capabilities = videoTrack.getCapabilities();
+                
+                // Check if manual focus is supported
+                if (capabilities.focusMode && capabilities.focusMode.includes('manual')) {
+                    // Calculate focus point based on tap location
+                    const video = e.target;
+                    const rect = video.getBoundingClientRect();
+                    const x = (e.clientX - rect.left) / rect.width;
+                    const y = (e.clientY - rect.top) / rect.height;
+                    
+                    // Apply point of interest for focus
+                    await videoTrack.applyConstraints({
+                        advanced: [{
+                            focusMode: 'single-shot',
+                            pointsOfInterest: [{x, y}]
+                        }]
+                    });
+                    
+                    // Return to continuous focus after a moment
+                    setTimeout(async () => {
+                        try {
+                            await videoTrack.applyConstraints({
+                                advanced: [{ focusMode: 'continuous' }]
+                            });
+                        } catch (e) {}
+                    }, 2000);
+                }
+            } catch (error) {
+                console.log('Tap-to-focus not available:', error);
             }
         });
 
