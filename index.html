@@ -638,8 +638,10 @@
                 let constraints = {
                     video: { 
                         facingMode: 'environment',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
+                        width: { ideal: 3840 },
+                        height: { ideal: 2160 },
+                        aspectRatio: { ideal: 16/9 },
+                        frameRate: { ideal: 30 }
                     }
                 };
 
@@ -770,7 +772,7 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0);
             
-            const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+            const base64Data = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
             lastCapturedImage = base64Data;
             
             await analyzeImage(base64Data);
@@ -1062,7 +1064,7 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0);
-                    const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+                    const base64Data = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
                     lastCapturedImage = base64Data;
                     
                     await analyzeImage(base64Data, transcript);
