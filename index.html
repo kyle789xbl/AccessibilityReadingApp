@@ -246,20 +246,42 @@
 
         .status-badge {
             position: absolute;
-            bottom: 1rem;
+            bottom: 2rem;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.9);
             backdrop-filter: blur(10px);
-            padding: 0.75rem 1.5rem;
-            border-radius: 25px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            border: 1px solid rgba(74, 158, 255, 0.3);
+            padding: 1.5rem 3rem;
+            border-radius: 30px;
+            font-size: 1.4rem;
+            font-weight: 700;
+            border: 2px solid rgba(74, 158, 255, 0.5);
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            justify-content: center;
             z-index: 10;
+            letter-spacing: 2px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .debug-info {
+            position: absolute;
+            top: 4rem;
+            left: 1rem;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            padding: 0.5rem;
+            border-radius: 8px;
+            font-size: 0.7rem;
+            font-family: monospace;
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            max-width: 250px;
+            z-index: 10;
+            display: none;
+        }
+
+        .debug-info.visible {
+            display: block;
         }
 
         .status-dot {
@@ -474,13 +496,12 @@
                     </div>
                 </div>
 
-                <div class="video-controls">
-                    <button class="video-btn" id="expandBtn" title="Expand">⛶</button>
+                <div class="status-badge" id="statusBadge">
+                    <span id="statusText">READY</span>
                 </div>
 
-                <div class="status-badge" id="statusBadge">
-                    <span class="status-dot"></span>
-                    <span id="statusText">Ready</span>
+                <div class="debug-info" id="debugInfo">
+                    <div id="debugContent">Camera info...</div>
                 </div>
             </div>
         </div>
@@ -493,31 +514,13 @@
             
             <div id="readingsContainer"></div>
         </div>
-
-        <div class="controls-bar">
-            <button class="control-btn btn-camera" id="cameraBtn">
-                <span class="btn-icon">📷</span>
-                <span class="btn-label">Camera</span>
-            </button>
-            <button class="control-btn btn-ask" id="askBtn">
-                <span class="btn-icon">🎤</span>
-                <span class="btn-label">Ask</span>
-            </button>
-            <button class="control-btn btn-repeat" id="repeatBtn">
-                <span class="btn-icon">🔁</span>
-                <span class="btn-label">Repeat</span>
-            </button>
-            <button class="control-btn btn-clear" id="clearBtn">
-                <span class="btn-icon">🗑️</span>
-                <span class="btn-label">Clear</span>
-            </button>
-        </div>
     </div>
 
     <script>
         let apiKey = '';
         let apiProvider = 'anthropic'; // 'anthropic' or 'openai'
         let cameraStream = null;
+        let imageCapture = null; // For advanced camera control
         let isCameraOn = false;
         let isScanning = false;
         let scanInterval = null;
@@ -589,12 +592,20 @@
                 return;
             }
             
+            // Save to localStorage
+            localStorage.setItem('visionAssistantApiKey', apiKey);
+            localStorage.setItem('visionAssistantProvider', apiProvider);
+            
             document.getElementById('setupModal').classList.add('hidden');
             document.getElementById('appContainer').classList.remove('hidden');
             
             const providerName = apiProvider === 'anthropic' ? 'Claude' : 'GPT-4';
-            speak(`Vision Assistant ready with ${providerName}. Tap camera to start.`);
-            requestPermissions();
+            speak(`Vision Assistant ready with ${providerName}.`);
+            
+            // Auto-start camera after setup
+            setTimeout(() => {
+                startCamera();
+            }, 1000);
         };
 
         async function requestPermissions() {
@@ -609,7 +620,7 @@
                 stream.getTracks().forEach(track => track.stop());
                 
                 speak('Permissions granted. Ready to assist.');
-                updateStatus('Ready');
+                updateStatus('READY');
             } catch (error) {
                 console.error('Permission error:', error);
                 
@@ -635,12 +646,15 @@
                 }
 
                 // Try with different constraints for better compatibility
+                // Samsung devices require specific constraint ordering and structure
+                // Lower frame rate helps in low light by allowing longer exposure per frame
                 let constraints = {
                     video: { 
-                        facingMode: 'environment',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        focusMode: 'continuous'
+                        facingMode: { exact: 'environment' },
+                        width: { ideal: 3840, min: 1920 },
+                        height: { ideal: 2160, min: 1080 },
+                        aspectRatio: { ideal: 16/9 },
+                        frameRate: { ideal: 24, max: 30, min: 15 } // Lower FPS = better low-light
                     }
                 };
 
@@ -678,23 +692,155 @@
                     setTimeout(() => reject(new Error('Video load timeout')), 5000);
                 });
                 
-                // Apply autofocus after video starts
+                // Enable autofocus and advanced camera features
                 try {
-                    const track = cameraStream.getVideoTracks()[0];
-                    await track.applyConstraints({
-                        advanced: [{ focusMode: 'continuous' }]
-                    });
-                    console.log('Autofocus enabled');
-                } catch (e) {
-                    console.log('Could not enable autofocus:', e);
+                    const videoTrack = cameraStream.getVideoTracks()[0];
+                    const capabilities = videoTrack.getCapabilities();
+                    
+                    console.log('Camera capabilities:', capabilities);
+                    
+                    // Initialize ImageCapture API for advanced control
+                    if ('ImageCapture' in window) {
+                        imageCapture = new ImageCapture(videoTrack);
+                        const photoCapabilities = await imageCapture.getPhotoCapabilities();
+                        console.log('Photo capabilities:', photoCapabilities);
+                        
+                        // Configure photo settings for best quality
+                        const photoSettings = {};
+                        
+                        // Focus mode - continuous is best for video/scanning
+                        if (photoCapabilities.focusMode && photoCapabilities.focusMode.length > 0) {
+                            if (photoCapabilities.focusMode.includes('continuous')) {
+                                photoSettings.focusMode = 'continuous';
+                            } else if (photoCapabilities.focusMode.includes('single-shot')) {
+                                photoSettings.focusMode = 'single-shot';
+                            }
+                        }
+                        
+                        // Set focus distance for optimal text reading (usually mid-range)
+                        if (photoCapabilities.focusDistance) {
+                            // For text scanning, use mid-range focus (20-50cm typically)
+                            const minDist = photoCapabilities.focusDistance.min || 0;
+                            const maxDist = photoCapabilities.focusDistance.max || 10;
+                            photoSettings.focusDistance = Math.min(maxDist, Math.max(minDist, 0.3)); // ~30cm
+                            console.log('Setting focus distance to:', photoSettings.focusDistance);
+                        }
+                        
+                        // Configure for low light
+                        if (photoCapabilities.iso) {
+                            photoSettings.iso = Math.min(800, photoCapabilities.iso.max || 800);
+                        }
+                        
+                        if (photoCapabilities.exposureCompensation) {
+                            photoSettings.exposureCompensation = Math.min(1, photoCapabilities.exposureCompensation.max || 1);
+                        }
+                        
+                        // Enable fill light (flash) if available
+                        if (photoCapabilities.fillLightMode && photoCapabilities.fillLightMode.includes('auto')) {
+                            photoSettings.fillLightMode = 'auto';
+                        }
+                        
+                        console.log('Photo settings to apply:', photoSettings);
+                    }
+                    
+                    // Apply constraints for Samsung and other devices
+                    const advancedConstraints = [];
+                    
+                    // Try continuous autofocus (most important for Samsung)
+                    if (capabilities.focusMode) {
+                        if (capabilities.focusMode.includes('continuous')) {
+                            advancedConstraints.push({ focusMode: 'continuous' });
+                        } else if (capabilities.focusMode.includes('auto')) {
+                            advancedConstraints.push({ focusMode: 'auto' });
+                        }
+                    }
+                    
+                    // Try to enable HDR/advanced processing if available
+                    if (capabilities.exposureMode && capabilities.exposureMode.includes('continuous')) {
+                        advancedConstraints.push({ exposureMode: 'continuous' });
+                    }
+                    
+                    if (capabilities.whiteBalanceMode && capabilities.whiteBalanceMode.includes('continuous')) {
+                        advancedConstraints.push({ whiteBalanceMode: 'continuous' });
+                    }
+                    
+                    // LOW-LIGHT OPTIMIZATIONS
+                    // Enable torch/flash for low light (Samsung supports this)
+                    if (capabilities.torch) {
+                        advancedConstraints.push({ torch: true });
+                        console.log('Torch available - enabling for low light');
+                    }
+                    
+                    // Increase ISO for better low-light sensitivity
+                    if (capabilities.iso) {
+                        const maxIso = capabilities.iso.max || 800;
+                        // Use higher ISO for low light (typically 400-800 is good)
+                        advancedConstraints.push({ iso: Math.min(800, maxIso) });
+                        console.log('ISO control available - setting to:', Math.min(800, maxIso));
+                    }
+                    
+                    // Increase exposure compensation for darker scenes
+                    if (capabilities.exposureCompensation) {
+                        // Positive compensation brightens the image
+                        const maxCompensation = capabilities.exposureCompensation.max || 2;
+                        advancedConstraints.push({ exposureCompensation: Math.min(1, maxCompensation) });
+                        console.log('Exposure compensation available - boosting brightness');
+                    }
+                    
+                    // Reduce shutter speed for more light (longer exposure)
+                    if (capabilities.exposureTime) {
+                        const maxExposureTime = capabilities.exposureTime.max;
+                        if (maxExposureTime) {
+                            // Use longer exposure for low light, but not too long to avoid blur
+                            advancedConstraints.push({ exposureTime: Math.min(maxExposureTime, 100) });
+                            console.log('Exposure time control available');
+                        }
+                    }
+                    
+                    // Enable brightness boost if available
+                    if (capabilities.brightness) {
+                        const maxBrightness = capabilities.brightness.max || 255;
+                        advancedConstraints.push({ brightness: maxBrightness });
+                        console.log('Brightness control available - maximizing');
+                    }
+                    
+                    // Apply all constraints
+                    if (advancedConstraints.length > 0) {
+                        try {
+                            await videoTrack.applyConstraints({ 
+                                advanced: advancedConstraints 
+                            });
+                            console.log('Applied advanced constraints:', advancedConstraints);
+                        } catch (e) {
+                            console.log('Could not apply advanced constraints, trying individually...');
+                            // Try applying one at a time
+                            for (const constraint of advancedConstraints) {
+                                try {
+                                    await videoTrack.applyConstraints({ advanced: [constraint] });
+                                    console.log('Applied constraint:', constraint);
+                                } catch (e2) {
+                                    console.log('Failed constraint:', constraint, e2);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Log final settings
+                    const settings = videoTrack.getSettings();
+                    console.log('Final camera settings:', settings);
+                    
+                    // Update debug info
+                    updateDebugInfo(capabilities, settings);
+                    
+                } catch (focusError) {
+                    console.log('Advanced camera features error:', focusError);
                 }
                 
                 isCameraOn = true;
                 document.getElementById('cameraOff').classList.add('hidden');
-                document.getElementById('cameraBtn').classList.add('active');
                 
                 speak('Camera active. Point at text or packages.');
-                updateStatus('Camera Active');
+                updateStatus('SCANNING');
                 
                 startContinuousScanning();
             } catch (error) {
@@ -733,12 +879,101 @@
             
             isCameraOn = false;
             document.getElementById('cameraOff').classList.remove('hidden');
-            document.getElementById('cameraBtn').classList.remove('active');
             
             stopContinuousScanning();
             speak('Camera off');
-            updateStatus('Ready');
+            updateStatus('READY');
+            
+            // Hide debug info when camera is off
+            document.getElementById('debugInfo').classList.remove('visible');
         }
+
+        function updateDebugInfo(capabilities, settings) {
+            const debugContent = document.getElementById('debugContent');
+            const info = [
+                `Resolution: ${settings.width}x${settings.height}`,
+                `Focus: ${settings.focusMode || 'unknown'}`,
+                `Torch: ${settings.torch ? 'ON' : 'off'}`,
+                `ISO: ${settings.iso || 'auto'}`,
+                `Exposure: ${settings.exposureCompensation || 'auto'}`,
+                `FPS: ${settings.frameRate || '?'}`
+            ];
+            debugContent.innerHTML = info.join('<br>');
+            
+            // Auto-show debug for 5 seconds
+            const debugDiv = document.getElementById('debugInfo');
+            debugDiv.classList.add('visible');
+            setTimeout(() => {
+                debugDiv.classList.remove('visible');
+            }, 5000);
+        }
+
+        // Double-tap video to toggle debug info
+        // Long-press to toggle torch/flash
+        let lastTap = 0;
+        let touchTimer = null;
+        let torchEnabled = true; // Track torch state
+        
+        document.getElementById('video').addEventListener('touchstart', (e) => {
+            // Start long-press timer
+            touchTimer = setTimeout(async () => {
+                // Long press detected - toggle torch
+                if (!isCameraOn || !cameraStream) return;
+                
+                try {
+                    const videoTrack = cameraStream.getVideoTracks()[0];
+                    const capabilities = videoTrack.getCapabilities();
+                    
+                    if (capabilities.torch) {
+                        torchEnabled = !torchEnabled;
+                        await videoTrack.applyConstraints({
+                            advanced: [{ torch: torchEnabled }]
+                        });
+                        
+                        const statusMsg = torchEnabled ? 'Flash ON' : 'Flash OFF';
+                        speak(statusMsg);
+                        console.log('Torch toggled:', torchEnabled);
+                        
+                        // Briefly show debug info to confirm
+                        const debugDiv = document.getElementById('debugInfo');
+                        debugDiv.classList.add('visible');
+                        setTimeout(() => {
+                            debugDiv.classList.remove('visible');
+                        }, 2000);
+                    }
+                } catch (error) {
+                    console.log('Torch toggle error:', error);
+                }
+            }, 800); // 800ms long press
+        });
+        
+        document.getElementById('video').addEventListener('touchend', (e) => {
+            // Clear long-press timer
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
+            
+            // Check for double-tap
+            const currentTime = new Date().getTime();
+            const tapGap = currentTime - lastTap;
+            
+            if (tapGap < 300 && tapGap > 0) {
+                // Double tap detected - show debug
+                const debugDiv = document.getElementById('debugInfo');
+                debugDiv.classList.toggle('visible');
+                e.preventDefault();
+            }
+            
+            lastTap = currentTime;
+        });
+
+        document.getElementById('video').addEventListener('touchcancel', () => {
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
+        });
 
         function startContinuousScanning() {
             if (scanInterval) return;
@@ -756,6 +991,37 @@
                     captureAndAnalyze();
                 }
             }, 3000);
+            
+            // Periodic focus refresh for Samsung devices
+            // This helps maintain sharp focus by triggering AF periodically
+            setInterval(async () => {
+                if (!isCameraOn || !cameraStream) return;
+                
+                try {
+                    const videoTrack = cameraStream.getVideoTracks()[0];
+                    const capabilities = videoTrack.getCapabilities();
+                    
+                    // Trigger focus refresh by toggling to single-shot and back
+                    if (capabilities.focusMode) {
+                        if (capabilities.focusMode.includes('single-shot')) {
+                            await videoTrack.applyConstraints({
+                                advanced: [{ focusMode: 'single-shot' }]
+                            });
+                            
+                            // Return to continuous after 100ms
+                            setTimeout(async () => {
+                                try {
+                                    await videoTrack.applyConstraints({
+                                        advanced: [{ focusMode: 'continuous' }]
+                                    });
+                                } catch (e) {}
+                            }, 100);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Auto-focus refresh error:', e);
+                }
+            }, 2000); // Refresh focus every 2 seconds
         }
 
         function stopContinuousScanning() {
@@ -772,8 +1038,51 @@
             
             lastScanTime = Date.now();
             isProcessing = true;
-            updateStatus('Analyzing...');
+            updateStatus('PROCESSING');
             
+            let base64Data;
+            
+            // Try using ImageCapture API for better quality (if available)
+            if (imageCapture) {
+                try {
+                    console.log('Using ImageCapture API for high-quality photo');
+                    
+                    // Take a photo with ImageCapture (better focus and quality)
+                    const blob = await imageCapture.takePhoto({
+                        imageHeight: 2160,
+                        imageWidth: 3840,
+                        fillLightMode: torchEnabled ? 'flash' : 'auto',
+                        focusMode: 'continuous'
+                    });
+                    
+                    // Convert blob to base64
+                    base64Data = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64 = reader.result.split(',')[1];
+                            resolve(base64);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blob);
+                    });
+                    
+                    console.log('ImageCapture photo taken successfully');
+                } catch (imageCaptureError) {
+                    console.log('ImageCapture failed, falling back to canvas:', imageCaptureError);
+                    // Fall back to canvas method
+                    base64Data = await captureFromCanvas();
+                }
+            } else {
+                // Use canvas method if ImageCapture not available
+                base64Data = await captureFromCanvas();
+            }
+            
+            lastCapturedImage = base64Data;
+            await analyzeImage(base64Data);
+            isProcessing = false;
+        }
+        
+        async function captureFromCanvas() {
             const video = document.getElementById('video');
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
@@ -782,11 +1091,7 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0);
             
-            const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
-            lastCapturedImage = base64Data;
-            
-            await analyzeImage(base64Data);
-            isProcessing = false;
+            return canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
         }
 
         async function analyzeImage(base64Data, customPrompt = null, isFollowUp = false) {
@@ -984,62 +1289,81 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
             }
         }
 
-        // Camera button
-        document.getElementById('cameraBtn').addEventListener('click', () => {
-            if (isCameraOn) {
-                stopCamera();
-            } else {
-                startCamera();
-            }
-        });
-
-        // Expand/collapse video
-        document.getElementById('expandBtn').addEventListener('click', () => {
-            const videoSection = document.getElementById('videoSection');
-            const contentSection = document.getElementById('contentSection');
-            const expandBtn = document.getElementById('expandBtn');
+        // Tap-to-focus on video
+        document.getElementById('video').addEventListener('click', async (e) => {
+            if (!isCameraOn || !cameraStream) return;
             
-            isFullscreen = !isFullscreen;
-            
-            if (isFullscreen) {
-                videoSection.classList.remove('compact');
-                videoSection.classList.add('fullscreen');
-                contentSection.style.display = 'none';
-                expandBtn.textContent = '✕';
-                expandBtn.title = 'Close';
-            } else {
-                videoSection.classList.remove('fullscreen');
-                videoSection.classList.add('compact');
-                contentSection.style.display = 'flex';
-                expandBtn.textContent = '⛶';
-                expandBtn.title = 'Expand';
+            try {
+                const videoTrack = cameraStream.getVideoTracks()[0];
+                const capabilities = videoTrack.getCapabilities();
+                
+                console.log('Tap-to-focus triggered');
+                
+                // For Samsung and most modern phones, try different focus strategies
+                let focusApplied = false;
+                
+                // Strategy 1: Try single-shot focus mode
+                if (capabilities.focusMode && capabilities.focusMode.includes('single-shot')) {
+                    try {
+                        await videoTrack.applyConstraints({
+                            advanced: [{ focusMode: 'single-shot' }]
+                        });
+                        console.log('Applied single-shot focus');
+                        focusApplied = true;
+                        
+                        // Return to continuous after 2 seconds
+                        setTimeout(async () => {
+                            try {
+                                if (capabilities.focusMode.includes('continuous')) {
+                                    await videoTrack.applyConstraints({
+                                        advanced: [{ focusMode: 'continuous' }]
+                                    });
+                                    console.log('Returned to continuous focus');
+                                }
+                            } catch (e) {
+                                console.log('Could not return to continuous:', e);
+                            }
+                        }, 2000);
+                    } catch (e) {
+                        console.log('Single-shot focus failed:', e);
+                    }
+                }
+                
+                // Strategy 2: Try manual focus toggle (works on some Samsung devices)
+                if (!focusApplied && capabilities.focusMode && capabilities.focusMode.includes('manual')) {
+                    try {
+                        await videoTrack.applyConstraints({
+                            advanced: [{ focusMode: 'manual' }]
+                        });
+                        
+                        setTimeout(async () => {
+                            try {
+                                await videoTrack.applyConstraints({
+                                    advanced: [{ focusMode: 'continuous' }]
+                                });
+                            } catch (e) {}
+                        }, 100);
+                        
+                        focusApplied = true;
+                        console.log('Applied manual focus toggle');
+                    } catch (e) {
+                        console.log('Manual focus failed:', e);
+                    }
+                }
+                
+                if (!focusApplied) {
+                    console.log('No focus modes worked, available modes:', capabilities.focusMode);
+                }
+                
+            } catch (error) {
+                console.log('Tap-to-focus error:', error);
             }
-        });
-
-        // Ask button
-        document.getElementById('askBtn').addEventListener('click', () => {
-            if (!recognition) {
-                speak('Speech recognition not supported');
-                return;
-            }
-
-            if (!isCameraOn) {
-                speak('Please turn on camera first');
-                return;
-            }
-
-            if (isRecording || isSpeaking || isProcessing) {
-                return;
-            }
-
-            startListening();
         });
 
         function startListening() {
             isRecording = true;
             isProcessing = true;
-            document.getElementById('askBtn').classList.add('recording');
-            updateStatus('Listening...');
+            updateStatus('WAITING FOR QUESTION');
             speak('What would you like to know?');
 
             setTimeout(() => recognition.start(), 1500);
@@ -1056,12 +1380,12 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
                     
                     conversationMode = false;
                     isProcessing = false;
-                    updateStatus('Ready');
+                    updateStatus('READY');
                     speak('Okay, let me know if you need anything else.');
                     return;
                 }
                 
-                updateStatus('Processing...');
+                updateStatus('PROCESSING');
                 
                 // Use the last captured image
                 if (lastCapturedImage) {
@@ -1074,7 +1398,7 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(video, 0, 0);
-                    const base64Data = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+                    const base64Data = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
                     lastCapturedImage = base64Data;
                     
                     await analyzeImage(base64Data, transcript);
@@ -1085,14 +1409,13 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
 
             recognition.onerror = () => {
                 speak('Could not hear you');
-                updateStatus('Ready');
+                updateStatus('READY');
                 isProcessing = false;
                 conversationMode = false;
             };
 
             recognition.onend = () => {
                 isRecording = false;
-                document.getElementById('askBtn').classList.remove('recording');
             };
         }
 
@@ -1100,8 +1423,7 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
             if (!recognition || isRecording || isSpeaking) return;
             
             isRecording = true;
-            document.getElementById('askBtn').classList.add('recording');
-            updateStatus('Listening for follow-up...');
+            updateStatus('WAITING FOR QUESTION');
             
             recognition.start();
             
@@ -1115,12 +1437,12 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
                     lowerTranscript.includes('no thanks')) {
                     
                     conversationMode = false;
-                    updateStatus('Ready');
+                    updateStatus('READY');
                     speak('Okay, I\'m back to scanning mode.');
                     return;
                 }
                 
-                updateStatus('Processing follow-up...');
+                updateStatus('PROCESSING');
                 
                 // Use the same image for follow-up questions
                 if (lastCapturedImage) {
@@ -1142,36 +1464,13 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
             
             recognition.onerror = () => {
                 conversationMode = false;
-                updateStatus('Ready');
+                updateStatus('READY');
             };
             
             recognition.onend = () => {
                 isRecording = false;
-                document.getElementById('askBtn').classList.remove('recording');
             };
         }
-
-        // Repeat button
-        document.getElementById('repeatBtn').addEventListener('click', () => {
-            if (readings.length > 0) {
-                speak(readings[0].content);
-            } else {
-                speak('Nothing to repeat');
-            }
-        });
-
-        // Clear button
-        document.getElementById('clearBtn').addEventListener('click', () => {
-            if (readings.length === 0) {
-                speak('Nothing to clear');
-                return;
-            }
-            
-            readings = [];
-            document.getElementById('readingsContainer').innerHTML = '';
-            document.getElementById('emptyState').classList.remove('hidden');
-            speak('Cleared all readings');
-        });
 
         // Wake lock
         let wakeLock = null;
@@ -1183,6 +1482,32 @@ Be CONCISE. Start with most critical info (dates, warnings).`;
             } catch (e) {}
         }
         requestWakeLock();
+
+        // Check for saved API key on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedApiKey = localStorage.getItem('visionAssistantApiKey');
+            const savedProvider = localStorage.getItem('visionAssistantProvider');
+            
+            if (savedApiKey && savedProvider) {
+                // Auto-fill and skip modal
+                apiKey = savedApiKey;
+                apiProvider = savedProvider;
+                
+                document.getElementById('setupModal').classList.add('hidden');
+                document.getElementById('appContainer').classList.remove('hidden');
+                
+                const providerName = apiProvider === 'anthropic' ? 'Claude' : 'GPT-4';
+                speak(`Welcome back. Using ${providerName}.`);
+                
+                // Auto-start camera
+                setTimeout(() => {
+                    startCamera();
+                }, 1500);
+            } else {
+                // Show modal for first time users
+                document.getElementById('setupModal').classList.remove('hidden');
+            }
+        });
     </script>
 </body>
 </html>
