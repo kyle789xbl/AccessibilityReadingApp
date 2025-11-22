@@ -520,6 +520,7 @@
         let apiKey = '';
         let apiProvider = 'anthropic'; // 'anthropic' or 'openai'
         let cameraStream = null;
+        let imageCapture = null; // For advanced camera control
         let isCameraOn = false;
         let isScanning = false;
         let scanInterval = null;
@@ -697,6 +698,50 @@
                     const capabilities = videoTrack.getCapabilities();
                     
                     console.log('Camera capabilities:', capabilities);
+                    
+                    // Initialize ImageCapture API for advanced control
+                    if ('ImageCapture' in window) {
+                        imageCapture = new ImageCapture(videoTrack);
+                        const photoCapabilities = await imageCapture.getPhotoCapabilities();
+                        console.log('Photo capabilities:', photoCapabilities);
+                        
+                        // Configure photo settings for best quality
+                        const photoSettings = {};
+                        
+                        // Focus mode - continuous is best for video/scanning
+                        if (photoCapabilities.focusMode && photoCapabilities.focusMode.length > 0) {
+                            if (photoCapabilities.focusMode.includes('continuous')) {
+                                photoSettings.focusMode = 'continuous';
+                            } else if (photoCapabilities.focusMode.includes('single-shot')) {
+                                photoSettings.focusMode = 'single-shot';
+                            }
+                        }
+                        
+                        // Set focus distance for optimal text reading (usually mid-range)
+                        if (photoCapabilities.focusDistance) {
+                            // For text scanning, use mid-range focus (20-50cm typically)
+                            const minDist = photoCapabilities.focusDistance.min || 0;
+                            const maxDist = photoCapabilities.focusDistance.max || 10;
+                            photoSettings.focusDistance = Math.min(maxDist, Math.max(minDist, 0.3)); // ~30cm
+                            console.log('Setting focus distance to:', photoSettings.focusDistance);
+                        }
+                        
+                        // Configure for low light
+                        if (photoCapabilities.iso) {
+                            photoSettings.iso = Math.min(800, photoCapabilities.iso.max || 800);
+                        }
+                        
+                        if (photoCapabilities.exposureCompensation) {
+                            photoSettings.exposureCompensation = Math.min(1, photoCapabilities.exposureCompensation.max || 1);
+                        }
+                        
+                        // Enable fill light (flash) if available
+                        if (photoCapabilities.fillLightMode && photoCapabilities.fillLightMode.includes('auto')) {
+                            photoSettings.fillLightMode = 'auto';
+                        }
+                        
+                        console.log('Photo settings to apply:', photoSettings);
+                    }
                     
                     // Apply constraints for Samsung and other devices
                     const advancedConstraints = [];
@@ -946,6 +991,37 @@
                     captureAndAnalyze();
                 }
             }, 3000);
+            
+            // Periodic focus refresh for Samsung devices
+            // This helps maintain sharp focus by triggering AF periodically
+            setInterval(async () => {
+                if (!isCameraOn || !cameraStream) return;
+                
+                try {
+                    const videoTrack = cameraStream.getVideoTracks()[0];
+                    const capabilities = videoTrack.getCapabilities();
+                    
+                    // Trigger focus refresh by toggling to single-shot and back
+                    if (capabilities.focusMode) {
+                        if (capabilities.focusMode.includes('single-shot')) {
+                            await videoTrack.applyConstraints({
+                                advanced: [{ focusMode: 'single-shot' }]
+                            });
+                            
+                            // Return to continuous after 100ms
+                            setTimeout(async () => {
+                                try {
+                                    await videoTrack.applyConstraints({
+                                        advanced: [{ focusMode: 'continuous' }]
+                                    });
+                                } catch (e) {}
+                            }, 100);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Auto-focus refresh error:', e);
+                }
+            }, 2000); // Refresh focus every 2 seconds
         }
 
         function stopContinuousScanning() {
@@ -964,6 +1040,49 @@
             isProcessing = true;
             updateStatus('PROCESSING');
             
+            let base64Data;
+            
+            // Try using ImageCapture API for better quality (if available)
+            if (imageCapture) {
+                try {
+                    console.log('Using ImageCapture API for high-quality photo');
+                    
+                    // Take a photo with ImageCapture (better focus and quality)
+                    const blob = await imageCapture.takePhoto({
+                        imageHeight: 2160,
+                        imageWidth: 3840,
+                        fillLightMode: torchEnabled ? 'flash' : 'auto',
+                        focusMode: 'continuous'
+                    });
+                    
+                    // Convert blob to base64
+                    base64Data = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64 = reader.result.split(',')[1];
+                            resolve(base64);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(blob);
+                    });
+                    
+                    console.log('ImageCapture photo taken successfully');
+                } catch (imageCaptureError) {
+                    console.log('ImageCapture failed, falling back to canvas:', imageCaptureError);
+                    // Fall back to canvas method
+                    base64Data = await captureFromCanvas();
+                }
+            } else {
+                // Use canvas method if ImageCapture not available
+                base64Data = await captureFromCanvas();
+            }
+            
+            lastCapturedImage = base64Data;
+            await analyzeImage(base64Data);
+            isProcessing = false;
+        }
+        
+        async function captureFromCanvas() {
             const video = document.getElementById('video');
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
@@ -972,11 +1091,7 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0);
             
-            const base64Data = canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
-            lastCapturedImage = base64Data;
-            
-            await analyzeImage(base64Data);
-            isProcessing = false;
+            return canvas.toDataURL('image/jpeg', 0.95).split(',')[1];
         }
 
         async function analyzeImage(base64Data, customPrompt = null, isFollowUp = false) {
