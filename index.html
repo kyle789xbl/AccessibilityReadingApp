@@ -646,13 +646,14 @@
 
                 // Try with different constraints for better compatibility
                 // Samsung devices require specific constraint ordering and structure
+                // Lower frame rate helps in low light by allowing longer exposure per frame
                 let constraints = {
                     video: { 
                         facingMode: { exact: 'environment' },
                         width: { ideal: 3840, min: 1920 },
                         height: { ideal: 2160, min: 1080 },
                         aspectRatio: { ideal: 16/9 },
-                        frameRate: { ideal: 30, min: 24 }
+                        frameRate: { ideal: 24, max: 30, min: 15 } // Lower FPS = better low-light
                     }
                 };
 
@@ -716,6 +717,46 @@
                     
                     if (capabilities.whiteBalanceMode && capabilities.whiteBalanceMode.includes('continuous')) {
                         advancedConstraints.push({ whiteBalanceMode: 'continuous' });
+                    }
+                    
+                    // LOW-LIGHT OPTIMIZATIONS
+                    // Enable torch/flash for low light (Samsung supports this)
+                    if (capabilities.torch) {
+                        advancedConstraints.push({ torch: true });
+                        console.log('Torch available - enabling for low light');
+                    }
+                    
+                    // Increase ISO for better low-light sensitivity
+                    if (capabilities.iso) {
+                        const maxIso = capabilities.iso.max || 800;
+                        // Use higher ISO for low light (typically 400-800 is good)
+                        advancedConstraints.push({ iso: Math.min(800, maxIso) });
+                        console.log('ISO control available - setting to:', Math.min(800, maxIso));
+                    }
+                    
+                    // Increase exposure compensation for darker scenes
+                    if (capabilities.exposureCompensation) {
+                        // Positive compensation brightens the image
+                        const maxCompensation = capabilities.exposureCompensation.max || 2;
+                        advancedConstraints.push({ exposureCompensation: Math.min(1, maxCompensation) });
+                        console.log('Exposure compensation available - boosting brightness');
+                    }
+                    
+                    // Reduce shutter speed for more light (longer exposure)
+                    if (capabilities.exposureTime) {
+                        const maxExposureTime = capabilities.exposureTime.max;
+                        if (maxExposureTime) {
+                            // Use longer exposure for low light, but not too long to avoid blur
+                            advancedConstraints.push({ exposureTime: Math.min(maxExposureTime, 100) });
+                            console.log('Exposure time control available');
+                        }
+                    }
+                    
+                    // Enable brightness boost if available
+                    if (capabilities.brightness) {
+                        const maxBrightness = capabilities.brightness.max || 255;
+                        advancedConstraints.push({ brightness: maxBrightness });
+                        console.log('Brightness control available - maximizing');
                     }
                     
                     // Apply all constraints
@@ -807,7 +848,9 @@
             const info = [
                 `Resolution: ${settings.width}x${settings.height}`,
                 `Focus: ${settings.focusMode || 'unknown'}`,
-                `Available: ${capabilities.focusMode ? capabilities.focusMode.join(', ') : 'none'}`,
+                `Torch: ${settings.torch ? 'ON' : 'off'}`,
+                `ISO: ${settings.iso || 'auto'}`,
+                `Exposure: ${settings.exposureCompensation || 'auto'}`,
                 `FPS: ${settings.frameRate || '?'}`
             ];
             debugContent.innerHTML = info.join('<br>');
@@ -821,19 +864,70 @@
         }
 
         // Double-tap video to toggle debug info
+        // Long-press to toggle torch/flash
         let lastTap = 0;
+        let touchTimer = null;
+        let torchEnabled = true; // Track torch state
+        
+        document.getElementById('video').addEventListener('touchstart', (e) => {
+            // Start long-press timer
+            touchTimer = setTimeout(async () => {
+                // Long press detected - toggle torch
+                if (!isCameraOn || !cameraStream) return;
+                
+                try {
+                    const videoTrack = cameraStream.getVideoTracks()[0];
+                    const capabilities = videoTrack.getCapabilities();
+                    
+                    if (capabilities.torch) {
+                        torchEnabled = !torchEnabled;
+                        await videoTrack.applyConstraints({
+                            advanced: [{ torch: torchEnabled }]
+                        });
+                        
+                        const statusMsg = torchEnabled ? 'Flash ON' : 'Flash OFF';
+                        speak(statusMsg);
+                        console.log('Torch toggled:', torchEnabled);
+                        
+                        // Briefly show debug info to confirm
+                        const debugDiv = document.getElementById('debugInfo');
+                        debugDiv.classList.add('visible');
+                        setTimeout(() => {
+                            debugDiv.classList.remove('visible');
+                        }, 2000);
+                    }
+                } catch (error) {
+                    console.log('Torch toggle error:', error);
+                }
+            }, 800); // 800ms long press
+        });
+        
         document.getElementById('video').addEventListener('touchend', (e) => {
+            // Clear long-press timer
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
+            
+            // Check for double-tap
             const currentTime = new Date().getTime();
             const tapGap = currentTime - lastTap;
             
             if (tapGap < 300 && tapGap > 0) {
-                // Double tap detected
+                // Double tap detected - show debug
                 const debugDiv = document.getElementById('debugInfo');
                 debugDiv.classList.toggle('visible');
                 e.preventDefault();
             }
             
             lastTap = currentTime;
+        });
+
+        document.getElementById('video').addEventListener('touchcancel', () => {
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
         });
 
         function startContinuousScanning() {
